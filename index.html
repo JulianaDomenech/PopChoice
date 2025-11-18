@@ -1,10 +1,95 @@
 <!doctype html>
-<html>
+<html lang="en">
     <head>
-        <title>PopChoice</title>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>PopChoice - Movie Recommendations</title>
         <link rel="stylesheet" href="index.css">
+        <link rel="preconnect" href="https://fonts.googleapis.com">
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     </head>
     <body>
+        <!-- Screen 1: Initial Questions Screen -->
+        <div id="screen1" class="screen active">
+            <div class="screen-container">
+                <header class="header">
+                    <div class="logo-container">
+                        <div class="popcorn-icon">
+                            <img src="images/PopChoiceBranding.png" alt="PopChoice Logo" class="popcorn-image" />
+                        </div>
+                    </div>
+                </header>
+
+                <main class="main-content">
+                    <div class="content-wrapper">
+                        <div class="questions-section">
+                            <div class="question-item">
+                                <p class="question-text">What's your favorite movie and why?</p>
+                                <textarea 
+                                    id="favoriteMovieInput" 
+                                    class="text-input" 
+                                    placeholder="The Shawshank Redemption&#10;Because it taught me to never give up hope no matter how hard life gets"
+                                    rows="3"
+                                ></textarea>
+                            </div>
+
+                            <div class="question-item">
+                                <p class="question-text">Are you in the mood for something new or a classic?</p>
+                                <input 
+                                    type="text" 
+                                    id="moodInput" 
+                                    class="text-input" 
+                                    placeholder="I want to watch movies that were released after 1990"
+                                />
+                            </div>
+
+                            <div class="question-item">
+                                <p class="question-text">Do you wanna have fun or do you want something serious?</p>
+                                <input 
+                                    type="text" 
+                                    id="funInput" 
+                                    class="text-input" 
+                                    placeholder="I want to watch something stupid and fun"
+                                />
+                            </div>
+                        </div>
+
+                        <div class="action-section">
+                            <button class="primary-button" id="letsGoButton">Let's Go</button>
+                        </div>
+                    </div>
+                </main>
+            </div>
+        </div>
+
+        <!-- Screen 2: Movie Recommendation Screen -->
+        <div id="screen2" class="screen">
+            <div class="screen-container">
+                <header class="header">
+                    <div class="logo-container">
+                        <div class="popcorn-icon">
+                            <img src="images/PopChoiceBranding.png" alt="PopChoice Logo" class="popcorn-image" />
+                        </div>
+                        <h1 class="logo">PopChoice</h1>
+                    </div>
+                </header>
+
+                <main class="main-content">
+                    <div class="content-wrapper">
+                        <div class="movie-recommendation">
+                            <h2 class="movie-title">School of Rock (2009)</h2>
+                            <p class="movie-description">A fun and stupid movie about a wannabe rocker turned fraud substitute teacher forming a rock band with his students to win the Battle of the Bands</p>
+                        </div>
+
+                        <div class="action-section">
+                            <button class="primary-button" id="goAgainButton">Go Again</button>
+                        </div>
+                    </div>
+                </main>
+            </div>
+        </div>
+
         <script type="module" src="index.js"></script>
     </body>
-</html> 
+</html>
