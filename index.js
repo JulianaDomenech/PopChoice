@@ -37,8 +37,11 @@ const CONFIG = {
   },
   API: {
     EMBEDDING_MODEL: 'text-embedding-ada-002',
+    CHAT_MODEL: 'gpt-4o-mini', // Use GPT-4o-mini for recommendations
     MATCH_THRESHOLD: 0.50,
-    MATCH_COUNT: 1
+    MATCH_COUNT: 1,
+    MAX_RESULTS_TO_CHECK: 5, // Fetch more results to filter out favorite movie
+    MOVIES_EXAMPLES_PATH: '/movies.txt' // Path to movies.txt examples (served from public folder in Vite)
   },
   MESSAGES: {
     LOADING: {
@@ -262,6 +265,40 @@ class FormManager {
   }
 
   /**
+   * Extracts the movie title from the favorite movie input
+   * Attempts to identify the movie title from free-form text
+   * @returns {string|null} Extracted movie title or null if not found
+   */
+  getFavoriteMovieTitle() {
+    const favoriteMovie = this.inputs.favoriteMovie?.value.trim() || '';
+    if (!favoriteMovie) {
+      return null;
+    }
+
+    // Try to extract movie title - look for common patterns
+    // Pattern 1: "Movie Title (Year)" or "Movie Title: description"
+    const titleWithYear = favoriteMovie.match(/^([^(]+?)\s*\(?\d{4}\)?/);
+    if (titleWithYear) {
+      return titleWithYear[1].trim();
+    }
+
+    // Pattern 2: "Movie Title" followed by colon or common words
+    const titleWithColon = favoriteMovie.match(/^([^:]+?)(?:\s*[:]|because|since|as|when)/i);
+    if (titleWithColon) {
+      return titleWithColon[1].trim();
+    }
+
+    // Pattern 3: First sentence or first 50 characters (likely the title)
+    const firstSentence = favoriteMovie.split(/[.!?]/)[0].trim();
+    if (firstSentence.length > 0 && firstSentence.length < 100) {
+      return firstSentence;
+    }
+
+    // Fallback: return first 50 characters
+    return favoriteMovie.substring(0, 50).trim();
+  }
+
+  /**
    * Collects and combines all user inputs into a query string
    * @returns {string} Combined user input for embedding generation
    */
@@ -302,6 +339,32 @@ class FormManager {
 // ============================================================================
 
 class MovieService {
+  constructor() {
+    this.moviesExamples = null; // Cache for movies.txt content
+  }
+
+  /**
+   * Loads movies.txt examples for ChatGPT prompt
+   * @returns {Promise<string>} Content of movies.txt
+   */
+  async loadMoviesExamples() {
+    if (this.moviesExamples) {
+      return this.moviesExamples;
+    }
+
+    try {
+      const response = await fetch(CONFIG.API.MOVIES_EXAMPLES_PATH);
+      if (!response.ok) {
+        throw new Error(`Failed to load movies examples: ${response.statusText}`);
+      }
+      this.moviesExamples = await response.text();
+      return this.moviesExamples;
+    } catch (error) {
+      console.warn('Could not load movies.txt, proceeding without examples:', error);
+      return ''; // Return empty string if file can't be loaded
+    }
+  }
+
   /**
    * Generates an embedding vector from text input
    * @param {string} text - Input text to embed
@@ -327,33 +390,36 @@ class MovieService {
   }
 
   /**
-   * Searches for matching movies using vector similarity
-   * @param {number[]} embedding - Query embedding vector
-   * @returns {Promise<Object|null>} Matching movie data or null
-   * @throws {Error} If search fails
+   * Checks if a movie content matches the favorite movie title
+   * @param {string} content - Movie content from database
+   * @param {string} favoriteMovieTitle - User's favorite movie title
+   * @returns {boolean} True if the movie matches the favorite
    */
-  async findMatchingMovie(embedding) {
-    try {
-      const { data, error } = await supabase.rpc('match_movies', {
-        query_embedding: embedding,
-        match_threshold: CONFIG.API.MATCH_THRESHOLD,
-        match_count: CONFIG.API.MATCH_COUNT
-      });
-
-      if (error) {
-        throw new Error(`Supabase query failed: ${error.message}`);
-      }
-
-      if (!data || data.length === 0) {
-        return null;
-      }
-
-      return data[0];
-    } catch (error) {
-      console.error('Error finding matching movie:', error);
-      throw new Error(`Failed to find matching movie: ${error.message}`);
+  isFavoriteMovie(content, favoriteMovieTitle) {
+    if (!favoriteMovieTitle) {
+      return false;
     }
+
+    // Normalize both strings for comparison
+    const normalize = (str) => str.toLowerCase().replace(/[^\w\s]/g, '').trim();
+    const normalizedContent = normalize(content);
+    const normalizedFavorite = normalize(favoriteMovieTitle);
+
+    // Check if favorite movie title appears in the content
+    // Extract title from content (format: "Title (Year): Description")
+    const contentTitleMatch = content.match(/^([^(]+)/);
+    if (contentTitleMatch) {
+      const contentTitle = normalize(contentTitleMatch[1].trim());
+      // Check if titles match (allowing for partial matches)
+      if (contentTitle.includes(normalizedFavorite) || normalizedFavorite.includes(contentTitle)) {
+        return true;
+      }
+    }
+
+    // Also check if favorite title appears anywhere in content
+    return normalizedContent.includes(normalizedFavorite);
   }
+
 
   /**
    * Parses movie content to extract title and description
@@ -378,22 +444,167 @@ class MovieService {
   }
 
   /**
+   * Uses ChatGPT to format recommendation in the style of movies.txt
+   * Acts as an expert movie recommender
+   * @param {string} userInput - User's preferences
+   * @param {string} favoriteMovieTitle - User's favorite movie (to exclude)
+   * @param {Array<{content: string, similarity: number}>} candidateMovies - Candidate movies from vector search
+   * @returns {Promise<{title: string, description: string}>} Formatted recommendation
+   */
+  async getChatGPTRecommendation(userInput, favoriteMovieTitle, candidateMovies) {
+    try {
+      const moviesExamples = await this.loadMoviesExamples();
+      
+      // Build candidate movies list for ChatGPT
+      const candidatesText = candidateMovies.map((movie, index) => {
+        const parsed = this.parseMovieContent(movie.content);
+        return `${index + 1}. ${parsed.title}\n   ${parsed.description}`;
+      }).join('\n\n');
+
+      const systemPrompt = `You are an expert movie recommender. Your job is to recommend movies to users based on their preferences.
+
+Here are examples of how to format movie recommendations (from movies.txt):
+
+${moviesExamples}
+
+IMPORTANT RULES:
+1. DO NOT recommend the movie "${favoriteMovieTitle}" - the user already mentioned it as their favorite
+2. Choose the BEST match from the candidate movies provided that is NOT "${favoriteMovieTitle}"
+3. Format your response EXACTLY like the examples above:
+   - First line: "Title: Year | Rating | Duration | Rating"
+   - Second line: A compelling description in the style of the examples (2-3 sentences)
+4. If the candidate movies don't have all the metadata (year, rating, duration), use the format from the database content
+5. Be enthusiastic and match the tone of the examples
+
+Respond with ONLY the formatted recommendation, nothing else.`;
+
+      const userPrompt = `User preferences:
+${userInput}
+
+${favoriteMovieTitle ? `User's favorite movie (DO NOT recommend this): ${favoriteMovieTitle}` : ''}
+
+Candidate movies from our database:
+${candidatesText}
+
+Please recommend the best movie from the candidates that matches the user's preferences, excluding "${favoriteMovieTitle}". Format it exactly like the examples.`;
+
+      const response = await openai.chat.completions.create({
+        model: CONFIG.API.CHAT_MODEL,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        temperature: 0.7,
+        max_tokens: 300
+      });
+
+      const recommendationText = response.choices[0]?.message?.content?.trim();
+      if (!recommendationText) {
+        throw new Error('Empty response from ChatGPT');
+      }
+
+      // Parse the ChatGPT response
+      return this.parseChatGPTResponse(recommendationText);
+    } catch (error) {
+      console.error('Error getting ChatGPT recommendation:', error);
+      // Fallback to direct parsing if ChatGPT fails
+      if (candidateMovies.length > 0) {
+        return this.parseMovieContent(candidateMovies[0].content);
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Parses ChatGPT response into title and description
+   * @param {string} response - ChatGPT response text
+   * @returns {{title: string, description: string}} Parsed recommendation
+   */
+  parseChatGPTResponse(response) {
+    const lines = response.split('\n').filter(line => line.trim());
+    
+    if (lines.length === 0) {
+      throw new Error('Invalid ChatGPT response format');
+    }
+
+    // First line should be the title with metadata
+    const titleLine = lines[0].trim();
+    // Extract just the title part (before the first | or :)
+    const titleMatch = titleLine.match(/^([^:|]+)/);
+    const title = titleMatch ? titleMatch[1].trim() : titleLine;
+
+    // Rest of the lines are the description
+    const description = lines.slice(1).join(' ').trim() || lines[0];
+
+    return { title, description };
+  }
+
+  /**
    * Finds a movie recommendation based on user input
+   * Uses vector search to find candidates, then ChatGPT to format the recommendation
    * @param {string} userInput - Combined user input text
+   * @param {string} [excludeTitle] - Movie title to exclude from results (user's favorite)
    * @returns {Promise<{title: string, description: string}>} Movie recommendation
    */
-  async getRecommendation(userInput) {
+  async getRecommendation(userInput, excludeTitle = null) {
     const embedding = await this.generateEmbedding(userInput);
-    const match = await this.findMatchingMovie(embedding);
+    
+    // Get multiple candidate movies
+    const candidates = await this.findMatchingMovies(embedding, excludeTitle, CONFIG.API.MAX_RESULTS_TO_CHECK);
 
-    if (!match) {
+    if (!candidates || candidates.length === 0) {
       return {
         title: CONFIG.MESSAGES.NO_MATCH.TITLE,
         description: CONFIG.MESSAGES.NO_MATCH.DESCRIPTION
       };
     }
 
-    return this.parseMovieContent(match.content);
+    // Use ChatGPT to format the recommendation in the style of movies.txt
+    try {
+      return await this.getChatGPTRecommendation(userInput, excludeTitle, candidates);
+    } catch (error) {
+      console.error('ChatGPT recommendation failed, using direct match:', error);
+      // Fallback to direct parsing
+      return this.parseMovieContent(candidates[0].content);
+    }
+  }
+
+  /**
+   * Finds multiple matching movies using vector similarity
+   * @param {number[]} embedding - Query embedding vector
+   * @param {string} [excludeTitle] - Movie title to exclude from results
+   * @param {number} count - Number of results to return
+   * @returns {Promise<Array<{content: string, similarity: number}>>} Matching movies
+   * @throws {Error} If search fails
+   */
+  async findMatchingMovies(embedding, excludeTitle = null, count = 5) {
+    try {
+      const { data, error } = await supabase.rpc('match_movies', {
+        query_embedding: embedding,
+        match_threshold: CONFIG.API.MATCH_THRESHOLD,
+        match_count: count
+      });
+
+      if (error) {
+        throw new Error(`Supabase query failed: ${error.message}`);
+      }
+
+      if (!data || data.length === 0) {
+        return [];
+      }
+
+      // Filter out the favorite movie if provided
+      if (excludeTitle) {
+        return data.filter(movie => 
+          !this.isFavoriteMovie(movie.content, excludeTitle)
+        );
+      }
+
+      return data;
+    } catch (error) {
+      console.error('Error finding matching movies:', error);
+      throw new Error(`Failed to find matching movies: ${error.message}`);
+    }
   }
 }
 
@@ -492,13 +703,14 @@ class AppController {
 
     try {
       const userInput = this.form.getUserInput();
+      const favoriteMovieTitle = this.form.getFavoriteMovieTitle();
       
       // Show results screen immediately for better UX
       this.ui.showScreen(2);
       this.ui.showLoading();
 
-      // Fetch and display recommendation
-      const recommendation = await this.movieService.getRecommendation(userInput);
+      // Fetch and display recommendation (excluding favorite movie)
+      const recommendation = await this.movieService.getRecommendation(userInput, favoriteMovieTitle);
       this.ui.displayMovie(recommendation.title, recommendation.description);
     } catch (error) {
       console.error('Error in recommendation flow:', error);
