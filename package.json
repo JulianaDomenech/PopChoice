@@ -1,6 +1,7 @@
 {
   "name": "Scrim-s05qo7r",
   "description": "https://scrimba.com/the-ai-engineer-path-c02v/~023",
+  "type": "module",
   "scripts": {
     "start": "vite",
     "dev": "vite",
@@ -12,5 +13,7 @@
     "openai": "4.12.3",
     "vite": "latest"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "dotenv": "^17.2.3"
+  }
 }
