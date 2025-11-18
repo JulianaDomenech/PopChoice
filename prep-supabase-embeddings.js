@@ -21,7 +21,7 @@ import { openai, supabase } from './config.js';
 import movies from './content.js';
 
 /**
- * Chunks text into smaller pieces for embedding
+ * Chunks text into smaller pieces for embedding with proper overlap
  * @param {string} text - The text to chunk
  * @param {number} chunkSize - Maximum characters per chunk
  * @param {number} overlap - Number of characters to overlap between chunks
@@ -29,27 +29,103 @@ import movies from './content.js';
  */
 function chunkText(text, chunkSize = 500, overlap = 50) {
   const chunks = [];
-  let start = 0;
+  let currentPos = 0;
   
-  while (start < text.length) {
-    let end = start + chunkSize;
+  while (currentPos < text.length) {
+    // Determine where this chunk should end
+    let chunkEnd = Math.min(currentPos + chunkSize, text.length);
     
-    // Try to break at sentence boundary
-    if (end < text.length) {
-      const lastPeriod = text.lastIndexOf('.', end);
-      const lastSpace = text.lastIndexOf(' ', end);
-      const breakPoint = lastPeriod > start ? lastPeriod + 1 : (lastSpace > start ? lastSpace : end);
-      end = breakPoint;
+    // If not at the end, try to break at a sentence boundary
+    if (chunkEnd < text.length) {
+      const searchStart = Math.max(currentPos, chunkEnd - 150);
+      
+      // Look for sentence boundary (period followed by space or end of text)
+      let sentenceEnd = -1;
+      for (let i = chunkEnd - 1; i >= searchStart; i--) {
+        if (text[i] === '.' && (i === text.length - 1 || text[i + 1] === ' ' || text[i + 1] === '\n')) {
+          sentenceEnd = i + 1;
+          break;
+        }
+      }
+      
+      if (sentenceEnd > searchStart) {
+        chunkEnd = sentenceEnd;
+      } else {
+        // Fall back to word boundary
+        const wordBoundary = text.lastIndexOf(' ', chunkEnd);
+        if (wordBoundary > searchStart) {
+          chunkEnd = wordBoundary + 1;
+        }
+      }
     }
     
-    const chunk = text.slice(start, end).trim();
+    // Extract chunk and trim whitespace
+    const chunk = text.slice(currentPos, chunkEnd).trim();
     if (chunk.length > 0) {
       chunks.push(chunk);
     }
     
-    // Move start position with overlap
-    start = end - overlap;
-    if (start >= text.length) break;
+    // If we've reached the end, stop
+    if (chunkEnd >= text.length) {
+      break;
+    }
+    
+    // Calculate next position with guaranteed overlap
+    // The overlap region is the last 'overlap' characters before chunkEnd
+    // The next chunk MUST include this overlap region at its start
+    let nextStart = chunkEnd - overlap;
+    
+    // Ensure we move forward
+    if (nextStart <= currentPos) {
+      nextStart = currentPos + Math.max(1, chunkSize - overlap);
+    }
+    
+    // Don't go past the end
+    if (nextStart >= text.length) {
+      break;
+    }
+    
+    // Verify overlap will be preserved
+    // The overlap text is: text.slice(chunkEnd - overlap, chunkEnd)
+    // The next chunk should start at: nextStart
+    // So the next chunk's first 'overlap' chars should match: text.slice(chunkEnd - overlap, chunkEnd)
+    // This means: nextStart should be <= chunkEnd - overlap (so the overlap region is included)
+    // But we also need: nextStart >= chunkEnd - overlap (to ensure we're not going backwards)
+    
+    // Actually, to guarantee overlap, nextStart MUST be exactly chunkEnd - overlap
+    // But we can adjust slightly for word boundaries as long as the overlap region is still included
+    const requiredOverlapStart = chunkEnd - overlap;
+    
+    // Try to find a word boundary near the required overlap start
+    const spaceBefore = text.lastIndexOf(' ', nextStart);
+    const spaceAfter = text.indexOf(' ', nextStart);
+    
+    // Adjust to word boundary, but ensure overlap region is still included in next chunk
+    if (spaceBefore >= requiredOverlapStart && spaceBefore < nextStart) {
+      // Can move to space before, as long as overlap region (requiredOverlapStart to chunkEnd) is still in next chunk
+      nextStart = spaceBefore + 1;
+    } else if (spaceAfter > nextStart && spaceAfter <= chunkEnd) {
+      // Can move to space after, but only if it doesn't skip the overlap region
+      if (spaceAfter >= requiredOverlapStart) {
+        nextStart = spaceAfter + 1;
+      }
+    }
+    
+    // Final check: ensure overlap region will be in the next chunk
+    // The overlap region is: text.slice(requiredOverlapStart, chunkEnd)
+    // The next chunk will be: text.slice(nextStart, ...)
+    // For overlap to work: nextStart must be <= requiredOverlapStart
+    if (nextStart > requiredOverlapStart) {
+      // Force overlap by starting at the required position
+      nextStart = requiredOverlapStart;
+    }
+    
+    // Ensure we still move forward
+    if (nextStart <= currentPos) {
+      nextStart = currentPos + 1;
+    }
+    
+    currentPos = nextStart;
   }
   
   return chunks;
@@ -70,6 +146,44 @@ async function main(moviesArray) {
     console.log(`Chunking content for: ${movie.title}`);
     const chunks = chunkText(movie.content);
     console.log(`  → Created ${chunks.length} chunks`);
+    
+    // Verify overlap for movies with multiple chunks
+    if (chunks.length > 1) {
+      console.log(`  → Verifying overlap between chunks...`);
+      for (let i = 0; i < chunks.length - 1; i++) {
+        const currentChunk = chunks[i];
+        const nextChunk = chunks[i + 1];
+        // Check if the end of current chunk overlaps with start of next chunk
+        const overlapSize = 50;
+        const currentEnd = currentChunk.slice(-overlapSize);
+        const nextStart = nextChunk.slice(0, overlapSize);
+        
+        // Check for actual text overlap (not just whitespace)
+        const currentEndWords = currentEnd.trim().split(/\s+/).filter(w => w.length > 0);
+        const nextStartWords = nextStart.trim().split(/\s+/).filter(w => w.length > 0);
+        
+        // Check if at least 3 words overlap
+        let overlapCount = 0;
+        for (let j = 0; j < Math.min(currentEndWords.length, nextStartWords.length); j++) {
+          if (currentEndWords[currentEndWords.length - 1 - j] === nextStartWords[j]) {
+            overlapCount++;
+          } else {
+            break;
+          }
+        }
+        
+        if (overlapCount >= 3 || nextStart.toLowerCase().includes(currentEnd.slice(-20).toLowerCase()) || currentEnd.toLowerCase().includes(nextStart.slice(0, 20).toLowerCase())) {
+          console.log(`    ✓ Chunk ${i + 1} and ${i + 2} have overlapping content (${overlapCount} words overlap)`);
+          console.log(`      Chunk ${i + 1} ends: "...${currentChunk.slice(-30)}"`);
+          console.log(`      Chunk ${i + 2} starts: "${nextChunk.slice(0, 30)}..."`);
+        } else {
+          console.log(`    ⚠ Chunk ${i + 1} and ${i + 2} may not have proper overlap`);
+          console.log(`      Chunk ${i + 1} ends: "...${currentChunk.slice(-30)}"`);
+          console.log(`      Chunk ${i + 2} starts: "${nextChunk.slice(0, 30)}..."`);
+        }
+      }
+    }
+    
     totalChunks += chunks.length;
     
     // Store chunks with movie context
