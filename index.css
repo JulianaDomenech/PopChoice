@@ -1,11 +1,16 @@
 /**
  * PopChoice - Movie Recommendation App
- * Main stylesheet with CSS custom properties and responsive design
+ * 
+ * Main stylesheet implementing the design system using CSS custom properties.
+ * All colors, spacing, typography, and transitions are defined as design tokens
+ * for easy maintenance and consistency.
+ * 
+ * Architecture:
+ * - Design tokens (CSS custom properties) for all values
+ * - Mobile-first responsive design
+ * - Semantic class naming following BEM-like conventions
+ * - Screen-based layout system for multi-screen app
  */
-
-/* ============================================
-   CSS Custom Properties (Design Tokens)
-   ============================================ */
 :root {
     --color-background: #000C36;
     --color-text-primary: #ffffff;

@@ -1,41 +1,108 @@
+/**
+ * Configuration Module
+ * 
+ * Centralizes API client configuration for OpenAI and Supabase.
+ * Handles environment variable loading for both Node.js and browser environments.
+ * 
+ * Environment Variables:
+ * - Node.js: Uses process.env (for scripts like prep-supabase-embeddings.js)
+ * - Browser (Vite): Uses import.meta.env with VITE_ prefix
+ * 
+ * Required Variables:
+ * - OPENAI_API_KEY / VITE_OPENAI_API_KEY: OpenAI API key
+ * - SUPABASE_URL / VITE_SUPABASE_URL: Supabase project URL
+ * - SUPABASE_API_KEY / VITE_SUPABASE_API_KEY: Supabase API key (service_role for scripts, anon for browser)
+ */
+
 import OpenAI from 'openai';
-import { createClient } from "@supabase/supabase-js";
+import { createClient } from '@supabase/supabase-js';
 
-// Determine if we're in Node.js (for prep script) or browser (Vite)
-const isNode = typeof process !== 'undefined' && process.versions && process.versions.node;
+// ============================================================================
+// Environment Detection
+// ============================================================================
 
-/** OpenAI config */
-// Use process.env for Node.js, import.meta.env for browser (Vite)
-const openaiApiKey = isNode 
-  ? process.env.OPENAI_API_KEY 
-  : (import.meta.env?.VITE_OPENAI_API_KEY || import.meta.env?.OPENAI_API_KEY);
+/**
+ * Determines if code is running in Node.js environment
+ * @returns {boolean} True if running in Node.js
+ */
+function isNodeEnvironment() {
+  return typeof process !== 'undefined' 
+    && process.versions 
+    && process.versions.node;
+}
+
+const isNode = isNodeEnvironment();
+
+// ============================================================================
+// Environment Variable Helpers
+// ============================================================================
+
+/**
+ * Gets environment variable based on current environment
+ * @param {string} nodeKey - Environment variable name for Node.js
+ * @param {string} viteKey - Environment variable name for Vite/browser
+ * @returns {string|undefined} Environment variable value
+ */
+function getEnvVar(nodeKey, viteKey) {
+  if (isNode) {
+    return process.env[nodeKey];
+  }
+  return import.meta.env?.[viteKey] || import.meta.env?.[nodeKey];
+}
+
+/**
+ * Logs a warning if a required environment variable is missing
+ * @param {string} key - Environment variable name
+ * @param {string} envType - 'Node.js' or 'Browser'
+ */
+function warnMissingKey(key, envType) {
+  const envVar = isNode ? key : `VITE_${key}`;
+  console.warn(
+    `⚠️  ${key} is missing. ` +
+    `Make sure ${envVar} is set in your .env file. ` +
+    `(Running in ${envType} environment)`
+  );
+}
+
+// ============================================================================
+// OpenAI Configuration
+// ============================================================================
+
+const openaiApiKey = getEnvVar('OPENAI_API_KEY', 'VITE_OPENAI_API_KEY');
 
 if (!openaiApiKey) {
-  const envVar = isNode ? 'OPENAI_API_KEY' : 'VITE_OPENAI_API_KEY';
-  console.warn(`OpenAI API key is missing. Make sure ${envVar} is set in your .env file.`);
+  warnMissingKey('OPENAI_API_KEY', isNode ? 'Node.js' : 'Browser');
 }
 
+/**
+ * OpenAI client instance
+ * @type {OpenAI}
+ */
 export const openai = new OpenAI({
   apiKey: openaiApiKey || 'dummy-key',
-  dangerouslyAllowBrowser: !isNode
+  dangerouslyAllowBrowser: !isNode // Only allow browser usage in browser environment
 });
 
-/** Supabase config */
-const supabaseUrl = isNode
-  ? process.env.SUPABASE_URL
-  : (import.meta.env?.VITE_SUPABASE_URL || import.meta.env?.SUPABASE_URL);
+// ============================================================================
+// Supabase Configuration
+// ============================================================================
 
-const supabaseKey = isNode
-  ? process.env.SUPABASE_API_KEY
-  : (import.meta.env?.VITE_SUPABASE_API_KEY || import.meta.env?.SUPABASE_API_KEY);
+const supabaseUrl = getEnvVar('SUPABASE_URL', 'VITE_SUPABASE_URL');
+const supabaseKey = getEnvVar('SUPABASE_API_KEY', 'VITE_SUPABASE_API_KEY');
 
 if (!supabaseUrl) {
-  const envVar = isNode ? 'SUPABASE_URL' : 'VITE_SUPABASE_URL';
-  console.warn(`Supabase URL is missing. Make sure ${envVar} is set in your .env file.`);
-}
-if (!supabaseKey) {
-  const envVar = isNode ? 'SUPABASE_API_KEY' : 'VITE_SUPABASE_API_KEY';
-  console.warn(`Supabase API key is missing. Make sure ${envVar} is set in your .env file.`);
+  warnMissingKey('SUPABASE_URL', isNode ? 'Node.js' : 'Browser');
 }
 
-export const supabase = createClient(supabaseUrl || 'https://dummy.supabase.co', supabaseKey || 'dummy-key');
+if (!supabaseKey) {
+  warnMissingKey('SUPABASE_API_KEY', isNode ? 'Node.js' : 'Browser');
+}
+
+/**
+ * Supabase client instance
+ * @type {import('@supabase/supabase-js').SupabaseClient}
+ */
+export const supabase = createClient(
+  supabaseUrl || 'https://dummy.supabase.co',
+  supabaseKey || 'dummy-key'
+);
