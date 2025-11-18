@@ -179,6 +179,27 @@ input.text-input {
 }
 
 /* ============================================
+   Validation Messages
+   ============================================ */
+.validation-message {
+    color: #ff6b6b;
+    font-size: 0.9rem;
+    text-align: center;
+    padding: var(--spacing-sm) var(--spacing-md);
+    margin: var(--spacing-sm) 0;
+    opacity: 0;
+    max-height: 0;
+    overflow: hidden;
+    transition: opacity var(--transition-speed), max-height var(--transition-speed), margin var(--transition-speed);
+}
+
+.validation-message.visible {
+    opacity: 1;
+    max-height: 100px;
+    margin: var(--spacing-sm) 0;
+}
+
+/* ============================================
    Buttons
    ============================================ */
 .action-section {

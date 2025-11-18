@@ -52,6 +52,12 @@ const CONFIG = {
     NO_MATCH: {
       TITLE: 'No Match Found',
       DESCRIPTION: 'We couldn\'t find a movie that matches your preferences. Please try again with different inputs.'
+    },
+    VALIDATION: {
+      EMPTY_FIELDS: 'Please fill in all three fields before continuing.',
+      FAVORITE_MOVIE_MISSING: 'Please tell us about your favorite movie and why you like it.',
+      MOOD_MISSING: 'Please let us know what kind of movie you\'re in the mood for.',
+      FUN_MISSING: 'Please tell us if you want something fun or serious.'
     }
   }
 };
@@ -68,7 +74,8 @@ class UIManager {
     };
     this.elements = {
       movieTitle: null,
-      movieDescription: null
+      movieDescription: null,
+      validationMessage: null
     };
   }
 
@@ -86,6 +93,7 @@ class UIManager {
 
     this.elements.movieTitle = document.querySelector(CONFIG.SELECTORS.MOVIE_TITLE);
     this.elements.movieDescription = document.querySelector(CONFIG.SELECTORS.MOVIE_DESCRIPTION);
+    this.elements.validationMessage = document.getElementById('validationMessage');
   }
 
   /**
@@ -140,6 +148,27 @@ class UIManager {
       customMessage || CONFIG.MESSAGES.ERROR.DESCRIPTION
     );
   }
+
+  /**
+   * Shows validation error message on questions screen
+   * @param {string} message - Validation error message to display
+   */
+  showValidationError(message) {
+    if (this.elements.validationMessage) {
+      this.elements.validationMessage.textContent = message;
+      this.elements.validationMessage.classList.add('visible');
+    }
+  }
+
+  /**
+   * Hides validation error message
+   */
+  hideValidationError() {
+    if (this.elements.validationMessage) {
+      this.elements.validationMessage.textContent = '';
+      this.elements.validationMessage.classList.remove('visible');
+    }
+  }
 }
 
 // ============================================================================
@@ -153,15 +182,83 @@ class FormManager {
       mood: null,
       fun: null
     };
+    this.onSubmitCallback = null;
   }
 
   /**
    * Initializes form input references from the DOM
+   * @param {Function} onSubmitCallback - Callback function to call when form should be submitted
    */
-  initialize() {
+  initialize(onSubmitCallback) {
     this.inputs.favoriteMovie = document.getElementById(CONFIG.INPUTS.FAVORITE_MOVIE);
     this.inputs.mood = document.getElementById(CONFIG.INPUTS.MOOD);
     this.inputs.fun = document.getElementById(CONFIG.INPUTS.FUN);
+    this.onSubmitCallback = onSubmitCallback;
+
+    // Add Enter key support to all inputs
+    this.attachEnterKeyListeners();
+  }
+
+  /**
+   * Attaches Enter key event listeners to all form inputs
+   * Enter key in any field triggers form submission
+   */
+  attachEnterKeyListeners() {
+    const allInputs = [
+      this.inputs.favoriteMovie,
+      this.inputs.mood,
+      this.inputs.fun
+    ].filter(Boolean);
+
+    allInputs.forEach(input => {
+      input.addEventListener('keydown', (e) => {
+        // Handle Enter key (but not Shift+Enter for textarea)
+        if (e.key === 'Enter' && !e.shiftKey) {
+          e.preventDefault();
+          if (this.onSubmitCallback) {
+            this.onSubmitCallback();
+          }
+        }
+      });
+    });
+  }
+
+  /**
+   * Validates that all required fields are filled
+   * @returns {{isValid: boolean, missingFields: string[], message: string}} Validation result
+   */
+  validate() {
+    const favoriteMovie = this.inputs.favoriteMovie?.value.trim() || '';
+    const mood = this.inputs.mood?.value.trim() || '';
+    const fun = this.inputs.fun?.value.trim() || '';
+
+    const missingFields = [];
+    if (!favoriteMovie) missingFields.push('favoriteMovie');
+    if (!mood) missingFields.push('mood');
+    if (!fun) missingFields.push('fun');
+
+    let message = '';
+    if (missingFields.length > 0) {
+      if (missingFields.length === 3) {
+        message = CONFIG.MESSAGES.VALIDATION.EMPTY_FIELDS;
+      } else if (missingFields.length === 1) {
+        if (missingFields[0] === 'favoriteMovie') {
+          message = CONFIG.MESSAGES.VALIDATION.FAVORITE_MOVIE_MISSING;
+        } else if (missingFields[0] === 'mood') {
+          message = CONFIG.MESSAGES.VALIDATION.MOOD_MISSING;
+        } else {
+          message = CONFIG.MESSAGES.VALIDATION.FUN_MISSING;
+        }
+      } else {
+        message = CONFIG.MESSAGES.VALIDATION.EMPTY_FIELDS;
+      }
+    }
+
+    return {
+      isValid: missingFields.length === 0,
+      missingFields,
+      message
+    };
   }
 
   /**
@@ -319,13 +416,33 @@ class AppController {
   initialize() {
     try {
       this.ui.initialize();
-      this.form.initialize();
+      // Pass submit callback to form manager for Enter key support
+      this.form.initialize(() => this.handleLetsGoClick());
       this.attachEventListeners();
+      this.attachInputListeners();
       this.ui.showScreen(1);
     } catch (error) {
       console.error('Failed to initialize application:', error);
       throw error;
     }
+  }
+
+  /**
+   * Attaches input listeners to hide validation errors when user types
+   */
+  attachInputListeners() {
+    const allInputs = [
+      this.form.inputs.favoriteMovie,
+      this.form.inputs.mood,
+      this.form.inputs.fun
+    ].filter(Boolean);
+
+    allInputs.forEach(input => {
+      input.addEventListener('input', () => {
+        // Hide validation error when user starts typing
+        this.ui.hideValidationError();
+      });
+    });
   }
 
   /**
@@ -353,13 +470,23 @@ class AppController {
   }
 
   /**
-   * Handles "Let's Go" button click
-   * Collects user input, transitions to results screen, and fetches recommendation
+   * Handles "Let's Go" button click or Enter key press
+   * Validates form, then collects user input, transitions to results screen, and fetches recommendation
    */
   async handleLetsGoClick() {
     if (this.isProcessing) {
       return; // Prevent multiple simultaneous requests
     }
+
+    // Validate all fields are filled
+    const validation = this.form.validate();
+    if (!validation.isValid) {
+      this.ui.showValidationError(validation.message);
+      return;
+    }
+
+    // Hide any previous validation errors
+    this.ui.hideValidationError();
 
     this.isProcessing = true;
 
@@ -383,10 +510,11 @@ class AppController {
 
   /**
    * Handles "Go Again" button click
-   * Resets form and returns to questions screen
+   * Resets form, clears validation errors, and returns to questions screen
    */
   handleGoAgainClick() {
     this.form.reset();
+    this.ui.hideValidationError();
     this.ui.showScreen(1);
   }
 }

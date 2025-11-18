@@ -36,6 +36,7 @@
                                     class="text-input" 
                                     placeholder="The Shawshank Redemption&#10;Because it taught me to never give up hope no matter how hard life gets"
                                     rows="3"
+                                    required
                                 ></textarea>
                             </div>
 
@@ -46,6 +47,7 @@
                                     id="moodInput" 
                                     class="text-input" 
                                     placeholder="I want to watch movies that were released after 1990"
+                                    required
                                 />
                             </div>
 
@@ -56,12 +58,15 @@
                                     id="funInput" 
                                     class="text-input" 
                                     placeholder="I want to watch something stupid and fun"
+                                    required
                                 />
                             </div>
                         </div>
 
+                        <div class="validation-message" id="validationMessage" role="alert" aria-live="polite"></div>
+
                         <div class="action-section">
-                            <button class="primary-button" id="letsGoButton">Let's Go</button>
+                            <button class="primary-button" id="letsGoButton" type="button">Let's Go</button>
                         </div>
                     </div>
                 </main>
